@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>M-Hunt (Manhunt Web)</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <style>
+        :root {
+            --primary: #dc2626;
+            --primary-dark: #b91c1c;
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #38bdf8;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: var(--bg-dark); color: var(--text-main); height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+        
+        /* Utility Screens */
+        .screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; background: var(--bg-dark); z-index: 10; padding: 20px; transition: opacity 0.3s ease; }
+        .screen.hidden { display: none !important; }
+        
+        .card { background: var(--bg-card); padding: 30px; border-radius: 16px; width: 100%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); text-align: center; border: 1px solid rgba(255,255,255,0.05); }
+        
+        /* Logo & M style */
+        .logo-container { margin-bottom: 20px; display: flex; justify-content: center; align-items: center; }
+        .target-logo { width: 80px; height: 80px; animation: pulse 2s infinite; }
+        
+        @keyframes pulse {
+            0% { transform: scale(0.95); opacity: 0.9; }
+            50% { transform: scale(1.05); opacity: 1; }
+            100% { transform: scale(0.95); opacity: 0.9; }
+        }
+
+        h1 { font-size: 2rem; margin-bottom: 10px; color: var(--text-main); font-weight: 800; letter-spacing: 1px; }
+        p { color: var(--text-muted); font-size: 0.95rem; margin-bottom: 20px; }
+
+        input { width: 100%; padding: 14px; margin-bottom: 15px; border-radius: 10px; border: 1px solid #334155; background: #0f172a; color: white; font-size: 1rem; text-align: center; outline: none; }
+        input:focus { border-color: var(--primary); }
+
+        .btn { width: 100%; padding: 14px; border-radius: 10px; border: none; background: var(--primary); color: white; font-size: 1rem; font-weight: bold; cursor: pointer; transition: background 0.2s, transform 0.1s; margin-bottom: 10px; }
+        .btn:hover { background: var(--primary-dark); }
+        .btn:active { transform: scale(0.98); }
+        .btn-secondary { background: #334155; }
+        .btn-secondary:hover { background: #475569; }
+
+        /* Game Map UI */
+        #map { width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1; }
+        
+        .hud-top { position: absolute; top: 15px; left: 15px; right: 15px; z-index: 5; display: flex; justify-content: space-between; align-items: flex-start; pointer-events: none; }
+        .hud-card { background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(8px); padding: 12px 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); pointer-events: auto; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+        
+        .hud-timer { font-size: 1.4rem; font-weight: bold; color: var(--accent); }
+        .hud-role { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); }
+        
+        .hud-bottom { position: absolute; bottom: 20px; left: 15px; right: 15px; z-index: 5; pointer-events: none; display: flex; flex-direction: column; gap: 10px; }
+        .alert-banner { background: rgba(220, 38, 38, 0.95); color: white; padding: 15px; border-radius: 12px; text-align: center; font-weight: bold; backdrop-filter: blur(8px); box-shadow: 0 4px 20px rgba(220,38,38,0.4); animation: shake 0.5s infinite alternate; pointer-events: auto; display: none; }
+        
+        @keyframes shake {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(3px); }
+        }
+
+        .lobby-players-list { max-height: 150px; overflow-y: auto; text-align: left; background: #0f172a; padding: 10px; border-radius: 8px; margin-bottom: 15px; font-size: 0.9rem; }
+        .player-item { padding: 6px 8px; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; }
+        
+        .badge { background: #334155; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; }
+        .badge.hunter { background: var(--primary); }
+    </style>
+</head>
+<body>
+
+    <!-- 1. FŐMENÜ SCREEN -->
+    <div id="screen-home" class="screen">
+        <div class="card">
+            <div class="logo-container">
+                <svg class="target-logo" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="42" fill="none" stroke="#dc2626" stroke-width="4"/>
+                    <line x1="50" y1="2" x2="50" y2="25" stroke="#dc2626" stroke-width="4"/>
+                    <line x1="50" y1="75" x2="50" y2="98" stroke="#dc2626" stroke-width="4"/>
+                    <line x1="2" y1="50" x2="25" y2="50" stroke="#dc2626" stroke-width="4"/>
+                    <line x1="75" y1="50" x2="98" y2="50" stroke="#dc2626" stroke-width="4"/>
+                    <circle cx="50" cy="50" r="18" fill="none" stroke="#dc2626" stroke-width="3"/>
+                    <!-- Tilted M -->
+                    <text x="50" y="58" fill="#dc2626" font-size="22" font-weight="900" font-style="italic" text-anchor="middle" transform="rotate(-12, 50, 50)">M</text>
+                </svg>
+            </div>
+            <h1>M-HUNT</h1>
+            <p>Valós idejű helyzetkövetős menekülős játék</p>
+            <input type="text" id="player-name-input" placeholder="Add meg a neved..." maxlength="20">
+            <button class="btn" onclick="showLobbyOptions()">Játék Indítása</button>
+        </div>
+    </div>
+
+    <!-- 2. LOBBY MENÜ SCREEN -->
+    <div id="screen-lobby-menu" class="screen hidden">
+        <div class="card">
+            <h2>Lobby Választás</h2>
+            <p id="welcome-user-msg" style="margin-bottom: 15px;"></p>
+            <button class="btn" onclick="createLobby()">Új Lobby Létrehozása</button>
+            <button class="btn btn-secondary" onclick="showJoinScreen()">Csatlakozás Kóddal</button>
+            <button class="btn btn-secondary" style="background:transparent; color:var(--text-muted);" onclick="backToHome()">Vissza</button>
+        </div>
+    </div>
+
+    <!-- 3. CSATLAKOZÁS KÓDDAL SCREEN -->
+    <div id="screen-join" class="screen hidden">
+        <div class="card">
+            <h2>Csatlakozás Lobbyhoz</h2>
+            <p>Írd be a 8 számjegyű kódot</p>
+            <input type="text" id="join-code-input" placeholder="12345678" maxlength="8">
+            <button class="btn" onclick="joinLobby()">Csatlakozás</button>
+            <button class="btn btn-secondary" onclick="backToLobbyMenu()">Vissza</button>
+        </div>
+    </div>
+
+    <!-- 4. LOBBY SZÁRNY SCREEN -->
+    <div id="screen-lobby-room" class="screen hidden">
+        <div class="card" style="max-width: 450px;">
+            <h2>Lobby Várószoba</h2>
+            <p>Lobby Kód: <strong id="display-lobby-code" style="color:var(--accent); font-size: 1.2rem; letter-spacing: 2px;">--------</strong></p>
+            <div class="lobby-players-list" id="players-list-container">
+                <!-- Játékosok listája -->
+            </div>
+            <div id="host-controls" style="display: none;">
+                <p style="font-size:0.8rem; margin-bottom:8px;">Gazda panel: Válaszd ki a Hunyót!</p>
+                <select id="hunter-select" style="width:100%; padding:10px; margin-bottom:10px; border-radius:8px; background:#0f172a; color:white; border:1px solid #334155;"></select>
+                <button class="btn" onclick="startRoundHost()">Kör Indítása</button>
+            </div>
+            <div id="guest-waiting-msg">
+                <p style="color: var(--accent); font-style: italic;">Várakozás a gazdára, amíg elindítja a kört...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 5. JÁTÉK TÉRKÉP SCREEN -->
+    <div id="screen-game" class="screen hidden" style="padding: 0;">
+        <div id="map"></div>
+        
+        <div class="hud-top">
+            <div class="hud-card">
+                <div class="hud-role" id="hud-role-text">Szerep</div>
+                <div class="hud-timer" id="hud-timer-display">00:00</div>
+            </div>
+            <div class="hud-card" style="text-align: right;">
+                <div class="hud-role">Játékosok</div>
+                <div style="font-weight: bold; font-size: 0.9rem;" id="hud-player-name">-</div>
+            </div>
+        </div>
+
+        <div class="hud-bottom">
+            <div id="alert-banner" class="alert-banner"></div>
+            <div class="hud-card" id="hud-info-box" style="text-align: center;">
+                <span id="hud-status-msg" style="font-size: 0.95rem; font-weight: 500;">Helyzet lekérése...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // TE SAJÁT FIREBASE KONFIGURÁCIÓD (maradt a meglévő projekt)
+        const firebaseConfig = {
+            apiKey: "AIzaSyBtUZ-0RlK08XT8iauXPJ6MNiEUdkt0_OY",
+            authDomain: "j-hunt-fdf32.firebaseapp.com",
+            projectId: "j-hunt-fdf32",
+            storageBucket: "j-hunt-fdf32.firebasestorage.app",
+            messagingSenderId: "147703014604",
+            appId: "1:147703014604:web:291f8f8855240ac1ab4e69"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        // Játékállapot változók
+        let myName = "";
+        let currentLobbyCode = "";
+        let isHost = false;
+        let myRole = "runner"; // 'hunter' vagy 'runner'
+        let myId = "user_" + Math.random().toString(36).substring(2, 9);
+        let lobbyUnsubscribe = null;
+        let locationsUnsubscribe = null;
+        
+        let map = null;
+        let myMarker = null;
+        let otherMarkers = {};
+        let hunterSpawnZone = null;
+        let watchId = null;
+        let gameTimerInterval = null;
+        let lastKnownCoords = null;
+        
+        // Szabályok állapota
+        let roundStartTime = null;
+        let hunterWaitOver = false;
+        let lastDistanceNotificationTime = 0;
+        let hasBeenCaught = false;
+
+        function showScreen(screenId) {
+            document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
+            document.getElementById(screenId).classList.remove('hidden');
+        }
+
+        function backToHome() { showScreen('screen-home'); }
+        function showJoinScreen() { showScreen('screen-join'); }
+        function backToLobbyMenu() { showScreen('screen-lobby-menu'); }
+
+        function showLobbyOptions() {
+            const nameInput = document.getElementById('player-name-input').value.trim();
+            if (!nameInput) {
+                alert("Kérlek add meg a neved!");
+                return;
+            }
+            myName = nameInput;
+            document.getElementById('welcome-user-msg').innerText = `Üdv, ${myName}!`;
+            showScreen('screen-lobby-menu');
+        }
+
+        function generateCode() {
+            return Math.floor(10000000 + Math.random() * 90000000).toString();
+        }
+
+        async function createLobby() {
+            currentLobbyCode = generateCode();
+            isHost = true;
+            
+            const lobbyData = {
+                code: currentLobbyCode,
+                host: myId,
+                status: 'waiting',
+                hunterId: '',
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            };
+
+            try {
+                await db.collection('lobbies').doc(currentLobbyCode).set(lobbyData);
+                await updateMyPlayerDoc({ role: 'runner', status: 'waiting' });
+                
+                document.getElementById('display-lobby-code').innerText = currentLobbyCode;
+                document.getElementById('host-controls').style.display = 'block';
+                document.getElementById('guest-waiting-msg').style.display = 'none';
+                
+                listenToLobby();
+                showScreen('screen-lobby-room');
+            } catch (e) {
+                alert("Hiba a lobby létrehozásakor: " + e.message);
+            }
+        }
+
+        async function joinLobby() {
+            const codeInput = document.getElementById('join-code-input').value.trim();
+            if (codeInput.length !== 8) {
+                alert("A kódnak pontosan 8 számjegyűnek kell lennie!");
+                return;
+            }
+
+            const docRef = db.collection('lobbies').doc(codeInput);
+            const doc = await docRef.get();
+            
+            if (!doc.exists) {
+                alert("Ilyen kódú lobby nem létezik!");
+                return;
+            }
+
+            const data = doc.data();
+            if (data.status !== 'waiting') {
+                alert("Ez a kör már elindult!");
+                return;
+            }
+
+            // Játékosok száma ellenőrzés (max 15)
+            const playersSnap = await docRef.collection('players').get();
+            if (playersSnap.size >= 15) {
+                alert("A lobby tele van (maximum 15 játékos)!");
+                return;
+            }
+
+            currentLobbyCode = codeInput;
+            isHost = false;
+
+            await updateMyPlayerDoc({ role: 'runner', status: 'waiting' });
+
+            document.getElementById('display-lobby-code').innerText = currentLobbyCode;
+            document.getElementById('host-controls').style.display = 'none';
+            document.getElementById('guest-waiting-msg').style.display = 'block';
+
+            listenToLobby();
+            showScreen('screen-lobby-room');
+        }
+
+        async function updateMyPlayerDoc(extraData = {}) {
+            const playerRef = db.collection('lobbies').doc(currentLobbyCode).collection('players').doc(myId);
+            await playerRef.set({
+                name: myName,
+                id: myId,
+                lat: lastKnownCoords ? lastKnownCoords.lat : 0,
+                lng: lastKnownCoords ? lastKnownCoords.lng : 0,
+                lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
+                ...extraData
+            }, { merge: true });
+        }
+
+        function listenToLobby() {
+            const lobbyRef = db.collection('lobbies').doc(currentLobbyCode);
+            
+            lobbyUnsubscribe = lobbyRef.onSnapshot(doc => {
+                if (!doc.exists) return;
+                const data = doc.data();
+                if (data.status === 'playing' && document.getElementById('screen-game').classList.contains('hidden')) {
+                    startTheGameEngine(data.hunterId);
+                }
+            });
+
+            const playersRef = lobbyRef.collection('players');
+            playersRef.onSnapshot(snapshot => {
+                let playersHtml = '';
+                let hunterSelectOptions = '';
+                
+                snapshot.forEach(doc => {
+                    const p = doc.data();
+                    playersHtml += `<div class="player-item"><span>${p.name} ${p.id === myId ? '(Te)' : ''}</span> <span class="badge ${p.role === 'hunter' ? 'hunter' : ''}">${p.role === 'hunter' ? 'Hunyó' : 'Menekülő'}</span></div>`;
+                    hunterSelectOptions += `<option value="${p.id}">${p.name}</option>`;
+                });
+
+                document.getElementById('players-list-container').innerHTML = playersHtml;
+                if (isHost) {
+                    const select = document.getElementById('hunter-select');
+                    if (select.children.length === 0) select.innerHTML = hunterSelectOptions;
+                }
+            });
+        }
+
+        async function startRoundHost() {
+            const selectedHunterId = document.getElementById('hunter-select').value;
+            if (!selectedHunterId) {
+                alert("Válassz ki egy hunyót!");
+                return;
+            }
+
+            const batch = db.batch();
+            const lobbyRef = db.collection('lobbies').doc(currentLobbyCode);
+            
+            batch.update(lobbyRef, {
+                status: 'playing',
+                hunterId: selectedHunterId,
+                startTime: firebase.firestore.FieldValue.serverTimestamp()
+            });
+
+            const playersSnap = await lobbyRef.collection('players').get();
+            playersSnap.forEach(doc => {
+                const role = (doc.id === selectedHunterId) ? 'hunter' : 'runner';
+                batch.update(doc.ref, { role: role });
+            });
+
+            await batch.commit();
+        }
+
+        function startTheGameEngine(hunterId) {
+            if (lobbyUnsubscribe) lobbyUnsubscribe();
+            showScreen('screen-game');
+
+            myRole = (myId === hunterId) ? 'hunter' : 'runner';
+            document.getElementById('hud-player-name').innerText = myName;
+            document.getElementById('hud-role-text').innerText = myRole === 'hunter' ? '🎯 TE VAGY A HUNYÓ' : '🏃 MENEKÜLŐ VAGY';
+            document.getElementById('hud-role-text').style.color = myRole === 'hunter' ? 'var(--primary)' : 'var(--accent)';
+
+            initMap();
+            startLocationTracking();
+            startMainGameLoop();
+        }
+
+        function initMap() {
+            if (map) { map.remove(); map = null; }
+            map = L.map('map', { zoomControl: false }).setView([47.4979, 19.0402], 16);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+        }
+
+        function startLocationTracking() {
+            if (!navigator.geolocation) {
+                alert("A böngésződ nem támogatja a GPS helymeghatározást!");
+                return;
+            }
+
+            watchId = navigator.geolocation.watchPosition(
+                position => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+                    lastKnownCoords = { lat, lng };
+
+                    if (!myMarker) {
+                        myMarker = L.circleMarker([lat, lng], {
+                            radius: 8,
+                            fillColor: myRole === 'hunter' ? '#dc2626' : '#38bdf8',
+                            color: '#fff',
+                            weight: 2,
+                            fillOpacity: 1
+                        }).addTo(map);
+                        map.setView([lat, lng], 17);
+                    } else {
+                        myMarker.setLatLng([lat, lng]);
+                    }
+
+                    if (myRole === 'hunter' && hunterSpawnZone) {
+                        const distance = map.distance([lat, lng], hunterSpawnZone.getLatLng());
+                        if (distance > 15) {
+                            triggerAlert("CSALÓ! Elhagytad a 15m-es kötelező várakozási zónát!");
+                        }
+                    }
+
+                    updateMyPlayerDoc({ lat, lng });
+                },
+                err => { console.warn("GPS hiba: ", err.message); },
+                { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+            );
+
+            locationsUnsubscribe = db.collection('lobbies').doc(currentLobbyCode).collection('players')
+                .onSnapshot(snapshot => {
+                    snapshot.forEach(doc => {
+                        const p = doc.data();
+                        if (p.id === myId) return;
+
+                        if (p.lat && p.lng) {
+                            if (otherMarkers[p.id]) {
+                                otherMarkers[p.id].setLatLng([p.lat, p.lng]);
+                            } else {
+                                otherMarkers[p.id] = L.circleMarker([p.lat, p.lng], {
+                                    radius: 7,
+                                    fillColor: p.role === 'hunter' ? '#dc2626' : '#10b981',
+                                    color: '#fff',
+                                    weight: 1.5,
+                                    fillOpacity: 0.8
+                                }).addTo(map).bindPopup(p.name);
+                            }
+                        }
+                    });
+                });
+        }
+
+        function startMainGameLoop() {
+            roundStartTime = Date.now();
+            let waitTimerSeconds = 300;
+
+            if (myRole === 'hunter' && lastKnownCoords) {
+                hunterSpawnZone = L.circle([lastKnownCoords.lat, lastKnownCoords.lng], {
+                    radius: 15,
+                    color: '#dc2626',
+                    fillColor: '#dc2626',
+                    fillOpacity: 0.3
+                }).addTo(map);
+            }
+
+            gameTimerInterval = setInterval(async () => {
+                const elapsedSec = Math.floor((Date.now() - roundStartTime) / 1000);
+                const remainingWait = 300 - elapsedSec;
+
+                if (remainingWait > 0) {
+                    const mins = Math.floor(remainingWait / 60);
+                    const secs = remainingWait % 60;
+                    document.getElementById('hud-timer-display').innerText = `Várakozás: ${mins}:${secs < 10 ? '0' : ''}${secs}`;
+                    if (myRole === 'hunter') {
+                        document.getElementById('hud-status-msg').innerText = `Maradj a 15m-es körön belül még ${mins}p ${secs}mp-ig!`;
+                    } else {
+                        document.getElementById('hud-status-msg').innerText = `A hunyó várakozik... (${mins}p maradt)`;
+                    }
+                } else {
+                    if (!hunterWaitOver) {
+                        hunterWaitOver = true;
+                        if (hunterSpawnZone) { map.removeLayer(hunterSpawnZone); }
+                    }
+
+                    const gameTimeElapsed = elapsedSec - 300;
+                    const minsGame = Math.floor(gameTimeElapsed / 60);
+                    const secsGame = gameTimeElapsed % 60;
+                    document.getElementById('hud-timer-display').innerText = `${minsGame}:${secsGame < 10 ? '0' : ''}${secsGame}`;
+                    
+                    checkHunterDistancesAndIntervals(gameTimeElapsed);
+                }
+
+                if (myRole === 'hunter' && lastKnownCoords) {
+                    const playersRef = await db.collection('lobbies').doc(currentLobbyCode).collection('players').get();
+                    playersRef.forEach(async doc => {
+                        const p = doc.data();
+                        if (p.id !== myId && p.role === 'runner' && p.lat && p.lng) {
+                            const dist = map.distance([lastKnownCoords.lat, lastKnownCoords.lng], [p.lat, p.lng]);
+                            if (dist <= 1.5 && !hasBeenCaught) {
+                                await doc.ref.update({ role: 'hunter' });
+                            }
+                        }
+                    });
+                }
+
+            }, 1000);
+        }
+
+        function checkHunterDistancesAndIntervals(gameSec) {
+            if (gameSec > 0 && gameSec % 300 === 0 && gameSec !== lastDistanceNotificationTime) {
+                lastDistanceNotificationTime = gameSec;
+                triggerAlert("Minden 5 percben frissül a hunyó körzete!");
+            }
+        }
+
+        function triggerAlert(msg) {
+            const banner = document.getElementById('alert-banner');
+            banner.innerText = msg;
+            banner.style.display = 'block';
+            setTimeout(() => { banner.style.display = 'none'; }, 5000);
+        }
+    </script>
+</body>
+</html>
